@@ -1,0 +1,94 @@
+
+# ------------------------------------
+# General Python Files
+# ------------------------------------
+
+# Byte-compiled / optimized / backup files
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+.DS_Store
+
+# Temporary files for editor/IDE
+*~
+# Backup files
+*.bak
+# Vim swap files
+*.swp
+
+# ------------------------------------
+# Virtual Environment
+# ------------------------------------
+
+# Standard virtual environment folder names
+venv/
+env/
+/bin/
+/include/
+/lib/
+/local/
+
+# Conda environment
+.conda/
+.env/
+
+# Pipenv environments
+# See: https://pipenv.pypa.io/en/latest/advanced/#configuration
+# Pipenv uses project-name-[hash] as the folder name
+.venv
+
+# ------------------------------------
+# Testing and Coverage
+# ------------------------------------
+
+# Coverage data
+.coverage
+.tox/
+.pytest_cache/
+htmlcov/
+.coverage.*
+
+# ------------------------------------
+# Build and Packaging
+# ------------------------------------
+
+# Distribution / packaging
+/dist/
+/build/
+/*.whl
+/*.zip
+/sdist/
+# Setuptools' temporary file
+.stestr/
+
+# PyInstaller / Nuitka
+# for a packed application
+*.spec
+# Build output for PyInstaller
+/dist/
+
+# ------------------------------------
+# IDE Specific Files
+# ------------------------------------
+
+# VS Code
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+# Editor history
+*.iml
+
+# ------------------------------------
+# Miscellaneous
+# ------------------------------------
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Notebooks
+.ipynb_checkpoints/
