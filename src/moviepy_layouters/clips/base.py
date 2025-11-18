@@ -30,8 +30,6 @@ class LayouterClip():
         self.memoized_t: float|None = None
         self.memoized_frame: np.ndarray|None = None
 
-        self.size_constraints = Constraints()
-
         if type(self) != LayouterClip and type(self).frame_function is LayouterClip.frame_function:
             print("[WARN] let me warn ya pls override frame_function if you directly uses LayouterClip because it returns empty image all the time")
             print("[WARN] but if you override it after init then pls ignore this")
@@ -39,30 +37,28 @@ class LayouterClip():
         if not ENABLE_DEBUGGING: delattr(self, "debug_size_info")
 
     def debug_size_info(self, indent=0):
-        print(" "*(indent*2)+f"{type(self).__name__}: Constraints: {self.size_constraints} | Size: {self.size}")
+        print(" "*(indent*2)+f"{type(self).__name__}: Size: {self.size}")
 
     @staticmethod
     def merge_constraints(one: Constraints, two: Constraints):
+        mw = max(one.min_width, two.min_width)
+        mh = max(one.min_height, two.min_height)
         return Constraints(
-            max(one.min_width, two.min_width),
-            max(one.min_height, two.min_height),
-            min(one.max_width, two.max_width),
-            min(one.max_height, two.max_height)
+            mw, mh,
+            max(mw, min(one.max_width, two.max_width)),
+            max(mh, min(one.max_height, two.max_height))
         )
 
-    def setup_layout(self):
-        # Merge the size constraints with the parent
-        if self.parent:
-            self.size_constraints = self.merge_constraints(self.parent.size_constraints, self.size_constraints)
-
-    def calculate_final_size(self):
+    def calculate_size(self, constraints: Constraints):
         """
         Subclasses should override this method to give the clip a final size for rendering.
         The default behavior is to set the size to the minimum constraint.
 
         This function is called after `setup_layout` on render so all necessary members are guaranteed to be initialized
         """
-        self.size = (self.size_constraints.min_width, self.size_constraints.min_height)
+        
+        self.size = (constraints.min_width, constraints.min_height)
+        return self.size
 
     def frame_function(self, t: float) -> np.ndarray:
         "Returns a WxHx4 numpy array at a given t"
@@ -86,7 +82,7 @@ class LayouterClip():
 
 
 class SingleChildLayouterClip(LayouterClip):
-    def __init__(self, child: Optional[LayouterClip], duration=None, has_constant_size=True):
+    def __init__(self, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
         super().__init__(duration, has_constant_size)
         self._child = None
         self.child = child
@@ -105,31 +101,20 @@ class SingleChildLayouterClip(LayouterClip):
         if self.child: self.child.debug_size_info(indent+1)
 
     @override
-    def setup_layout(self):
-        super().setup_layout()
-        if self.child: self.child.setup_layout()
-
-    def use_child_constraints(self):
-        # Setup the layout like normal (to know the constraints)
-        SingleChildLayouterClip.setup_layout(self)
+    def calculate_size(self, constraints: Constraints):
         if self.child:
-            # Steal the constraints from the child
-            self.size_constraints = self.merge_constraints(self.child.size_constraints, self.size_constraints)
-
-    @override
-    def calculate_final_size(self):
-        if self.child:
-            self.child.calculate_final_size() 
+            self.child.calculate_size(constraints) 
             self.size = self.child.size
+            return self.size
         else:
-            super().calculate_final_size()
+            return super().calculate_size(constraints)
 
     @override
     def frame_function(self, t: float):
         return self.child.get_frame(t) if self.child else super().frame_function(t)
 
 class MultiChildLayouterClip(LayouterClip):
-    def __init__(self, children: list[LayouterClip], duration=None, has_constant_size=True):
+    def __init__(self, children: list[LayouterClip] = [], duration=None, has_constant_size=True):
         super().__init__(duration, has_constant_size)
         self.children = children
         for c in children:
@@ -141,9 +126,16 @@ class MultiChildLayouterClip(LayouterClip):
         for child in self.children: 
             child.debug_size_info(indent+1)
 
-    @override
-    def setup_layout(self):
-        super().setup_layout()
-        for i in self.children:
-            i.setup_layout()
+class ProxyLayouterClip(SingleChildLayouterClip):
+    child: LayouterClip # type: ignore
+    def __init__(self, child: LayouterClip, duration=None, has_constant_size=True):
+        super().__init__(child, duration, has_constant_size)
 
+    @override
+    def calculate_size(self, constraints: Constraints):
+        return self.child.calculate_size(constraints)
+
+    @override
+    def frame_function(self, t: float):
+        return self.child.frame_function(t)
+    

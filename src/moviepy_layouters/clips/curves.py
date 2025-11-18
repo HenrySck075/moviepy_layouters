@@ -53,7 +53,7 @@ class Bezier(Curve):
         self.p2 = np.array(p2)
         self.p3 = np.array(p3)
     def bezier(self, t):
-        return (1-t)**3 * self.p0 + 3 * (1-t)**2 * t * self.p1 + 3 * (1-t) * t**2 * self.p2 + t**3 * self.p3
+        return ((1-t)**3) * self.p0 + (3 * (1-t)**2 * t) * self.p1 + (3 * (1-t) * t**2) * self.p2 + (t**3) * self.p3
     def transform(self, t: float) -> float:
         return self.bezier(t)[1]
 

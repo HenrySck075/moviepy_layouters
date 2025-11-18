@@ -1,7 +1,6 @@
 
 from typing import TypeGuard
 
-
 class Infinity:
     """
     A non-float class representing a conceptual positive infinity.

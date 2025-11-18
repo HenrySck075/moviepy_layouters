@@ -1,10 +1,70 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from sys import version
 from typing import Optional, List, Protocol, Union, Tuple, assert_type, override
 import numpy as np
 from moviepy_layouters.infinity import INF, Infinity, is_finite, is_inf
-from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip
+from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip, ProxyLayouterClip, SingleChildLayouterClip
+
+class AxisAlignment(Enum):
+    Start = 0,
+    Center = 1,
+    End = 2
+
+class Axis(Enum):
+    Vertical = 1
+    Horizontal = 0
+
+class Flex(ProxyLayouterClip):
+    def __init__(self, child: LayouterClip, flex=1, duration=None, has_constant_size=True):
+        super().__init__(child, duration, has_constant_size)
+        self.flex = flex
+
+class ListView(MultiChildLayouterClip):
+    def __init__(self, children: list[LayouterClip], axis = Axis.Vertical, gap: int = 0, main_axis_alignment = AxisAlignment.Start, cross_axis_alignment = AxisAlignment.Start, duration=None, has_constant_size=True):
+        super().__init__(children, duration, has_constant_size)
+        self.main_axis_alignment = main_axis_alignment
+        self.cross_axis_alignment = cross_axis_alignment
+        self.gap = gap
+        self.axis = axis
+
+    @override
+    def calculate_size(self, constraints):
+        flex_children: list[Flex] = []
+        main_axis_size = 0
+        cross_axis_size = 0
+
+        con = Constraints(constraints.min_width, constraints.min_height, constraints.max_width, constraints.max_height)
+
+        # I'm well aware of the presence of getattr but we are focusing on speed here
+        for c in self.children:
+            if type(c) is Flex:
+                flex_children.append(c)
+            else:
+                cs = c.calculate_size(con)
+                main_axis_size += cs[self.axis.value]
+                cross_axis_size = min(con.max_width if self.axis == Axis.Vertical else con.max_height, max(cross_axis_size, cs[(self.axis.value+1)%2]))
+                if self.axis == Axis.Vertical:
+                    con.min_height = min(con.max_height, con.min_height+main_axis_size+self.gap) # type: ignore
+                else:
+                    con.min_width = min(con.max_width, con.min_width+main_axis_size+self.gap) # type: ignore
+
+        if (
+            len(flex_children) != 0 and 
+            (constraints.max_height if self.axis == Axis.Vertical else constraints.max_width) is INF
+        ):
+            raise ValueError("The axis of the ListView has an infinite maximum size but a Flex child was found. Please set the maximum constraints to a finite number.")
+
+        if len(flex_children) == 0:
+            # just take the min constraints from con its the same as the total size
+            self.size = (con.min_width, con.min_height)
+            return self.size
+        else:
+            self.size = (con.max_width, con.max_height)
+       
+              
+         
 
 @dataclass
 class GridCellSize:
@@ -20,6 +80,7 @@ class GridCellSize:
             # Ensure pixel value is an integer
             return int(self.value / 100 * total_dimension)
         return int(self.value)
+
 
 @dataclass
 class GridSize:
@@ -49,11 +110,7 @@ class Grid(LayouterClip):
             for c_idx, clip in enumerate(row):
                 if clip:
                     clip.parent = self
-                    # Initially, set child constraints to a large value, 
-                    # they will be properly merged in setup_layout
-                    clip.size_constraints = Constraints(
-                        max_width=INF, max_height=INF
-                    )
+
     @override
     def debug_size_info(self, indent=0):
         super().debug_size_info(indent)
@@ -76,90 +133,70 @@ class Grid(LayouterClip):
              raise ValueError("Number of `row_heights` must match the number of rows in `grid_children`.")
         if len(self.grid_size.column_widths) != len(self.grid_children[0]):
              raise ValueError("Number of `column_widths` must match the number of columns in `grid_children`.")
-    
-    @override
-    def setup_layout(self):
-        super().setup_layout()
-        orig_constraint = self.size_constraints
-        
+   
+    def calculate_size(self, constraints):
+        """
+        Calculates the final size of the grid clip and its children based on grid_size 
+        and the parent's constraints.
+        """
+
+        # 1. Setup Layout (Calculate constraints for children)
+        # Note: self.size_constraints is replaced by constraints (parent_constraints)
         for r_idx, row in enumerate(self.grid_children):
             for c_idx, clip in enumerate(row):
                 rs, cs = self.grid_size.row_heights[r_idx], self.grid_size.column_widths[c_idx]
 
-                self.size_constraints = Constraints(
-                    cs.get_pixel_value(orig_constraint.min_width) - cs.gap,
-                    rs.get_pixel_value(orig_constraint.min_height) - rs.gap,
-                    (cs.get_pixel_value(orig_constraint.max_width) - cs.gap) if is_finite(orig_constraint.max_width) else INF,
-                    (rs.get_pixel_value(orig_constraint.max_height) - rs.gap) if is_finite(orig_constraint.max_height) else INF
+                # Calculate child constraints based on parent_constraints (constraints)
+                child_constraints = Constraints(
+                    cs.get_pixel_value(constraints.min_width) - cs.gap,
+                    rs.get_pixel_value(constraints.min_height) - rs.gap,
+                    (cs.get_pixel_value(constraints.max_width) - cs.gap) if is_finite(constraints.max_width) else INF,
+                    (rs.get_pixel_value(constraints.max_height) - rs.gap) if is_finite(constraints.max_height) else INF
                 )
-                clip.parent = self
-                clip.setup_layout()
-                if self.debug_size_info:
-                    print(f"DEBUG (Grid): {orig_constraint} : {self.size_constraints} : {clip.size_constraints}")
+                
+                # Note: Setting clip.parent is done in __init__
+                # clip.parent = self 
+                
+                # Recursively calculate the child's size based on its constraints
+                clip.calculate_size(child_constraints) # Assuming LayouterClip has this new method
 
-                self.size_constraints = orig_constraint
+                # No need to reset self.size_constraints as it's not used/stored in self anymore
 
-    def calculate_final_size(self):
-        """
-        Calculates the final size of the grid clip based on grid_size.
-        For simplicity, this example assumes the grid size completely dictates the clip's size.
-        """
-        # Calculate minimum required size based on pixel values
-        """
-        min_width = sum(
-            c.get_pixel_value(self.size_constraints.min_width) 
-            for c in self.grid_size.column_widths
-        )
-
-        min_height = sum(
-            r.get_pixel_value(self.size_constraints.min_height) 
-            for r in self.grid_size.row_heights
-        )
-        """
-
-        # The final size is determined by the max of the calculated size 
-        # and the minimum constraints
-        final_width: int = self.size_constraints.min_width#max(min_width, self.size_constraints.min_width)
-        final_height: int = self.size_constraints.min_height#max(min_height, self.size_constraints.min_height)
+        # 2. Calculate Final Size of the Grid Clip (self)
+        
+        # In the original code, the grid's final size was essentially pinned to the 
+        # parent's minimum constraint, clipped by the parent's maximum constraint.
+        
+        final_width: int = constraints.min_width
+        final_height: int = constraints.min_height
 
         # Apply max constraints if INF is not used
-        if is_finite(self.size_constraints.max_width):
-            final_width = min(final_width, self.size_constraints.max_width)
-        if is_finite(self.size_constraints.max_height):
-            final_height = min(final_height, self.size_constraints.max_height)
+        if is_finite(constraints.max_width):
+            final_width = min(final_width, constraints.max_width)
+        if is_finite(constraints.max_height):
+            final_height = min(final_height, constraints.max_height)
         
         self.size = (final_width, final_height)
         self.final_width = final_width
         self.final_height = final_height
 
-        # Calculate final pixel dimensions for each cell
+        # Calculate final pixel dimensions for each cell (including gap)
+        # This is needed for the rendering phase (not requested, but essential data)
         self.final_col_widths = [
-            c.get_pixel_value(final_width)+c.gap 
+            c.get_pixel_value(final_width) + c.gap 
             for c in self.grid_size.column_widths
         ]
         self.final_row_heights = [
-            r.get_pixel_value(final_height)+r.gap 
+            r.get_pixel_value(final_height) + r.gap 
             for r in self.grid_size.row_heights
         ]
 
-        # Call calculate_final_size on children now that parent size is known
-        for row in self.grid_children:
-            for clip in row:
-                if clip:
-                    # In a full layouter, you would also adjust the child's constraints
-                    # based on the cell size *before* calling calculate_final_size.
-                    # For this example, we skip constraint merging specific to grid cells
-                    # and rely on the children to size themselves within the cell later.
-                    clip.calculate_final_size()
-
-
+        # The function should return the newly calculated size of the Grid clip
+        return self.size
     def frame_function(self, t: float):
         """
         Renders the grid by composing the frames of its children.
         """
-        if self.size is None:
-            # Should be set by calculate_final_size, but safety first
-            self.calculate_final_size()
 
         # Create an empty background image for the grid
         frame = np.zeros((self.size[1],self.size[0], 4), dtype=np.uint8)
@@ -236,8 +273,9 @@ class Sequential(MultiChildLayouterClip):
         self.alignment = alignment
 
     @override
-    def calculate_final_size(self):
-        self.size = tuple(max(v) for v in zip(*[c.size for c in self.children]))
+    def calculate_size(self, constraints):
+        self.size = tuple(max(v) for v in zip(*[c.calculate_size(constraints) for c in self.children]))
+        return self.size
 
     @override
     def frame_function(self, t: float):

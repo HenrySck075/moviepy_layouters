@@ -12,10 +12,6 @@ class AnimatedClip(SingleChildLayouterClip):
         super().__init__(None, duration, has_constant_size)
         self.curve = curve
     
-    @override
-    def setup_layout(self):
-        return super().use_child_constraints()
-
     def frame_anim_function(self, at: float, t: float):
         return super().frame_function(0)
     @override
