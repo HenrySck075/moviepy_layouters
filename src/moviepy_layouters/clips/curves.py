@@ -1,5 +1,5 @@
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 
 if TYPE_CHECKING:
@@ -41,25 +41,30 @@ class Interval(Curve):
         self.curve = curve
 
     def transform(self, t: float) -> float:
-        t = clamp((t-self.begin)/(self.end-self.begin), 0,1) 
-        return self.curve.transform(t)
+        return self.curve.transform(clamp((t-self.begin)/(self.end-self.begin), 0,1))
 
-type XYcoord = tuple[float, float] 
-class Bezier(Curve):
-    def __init__(self, p0:XYcoord,p1:XYcoord,p2:XYcoord,p3:XYcoord) -> None:
-        super().__init__()
-        self.p0 = np.array(p0)
-        self.p1 = np.array(p1)
-        self.p2 = np.array(p2)
-        self.p3 = np.array(p3)
-    def bezier(self, t):
-        return ((1-t)**3) * self.p0 + (3 * (1-t)**2 * t) * self.p1 + (3 * (1-t) * t**2) * self.p2 + (t**3) * self.p3
-    def transform(self, t: float) -> float:
-        return self.bezier(t)[1]
 
-class Cubic(Bezier):
+class Cubic(Curve):
     def __init__(self, x1,y1, x2,y2) -> None:
-        super().__init__((0,0), (x1,y1), (x2,y2), (1,1))
+        self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
+
+    def _eval_cubic(self, a: float, b: float, m: float):
+        return 3 * a * (1 - m) * (1 - m) * m + 3 * b * (1 - m) * m * m + m * m * m
+
+    @override
+    def transform(self, t: float) -> float:
+        start = 0.0
+        end = 1.0
+        while True:
+            midpoint = (start + end) / 2
+            estimate = self._eval_cubic(self.x1, self.x2, midpoint);
+            if ((t - estimate).__abs__() < 0.001):
+                return clamp(self._eval_cubic(self.y1, self.y2, midpoint),0,1)
+            if (estimate < t):
+                start = midpoint
+            else:
+                end = midpoint
+        
 
 
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, override
 
 from moviepy.video.VideoClip import VideoClip
@@ -78,6 +79,9 @@ class Offset:
     dx: float 
     dy: float 
 
+def rigged_round(v: float):
+    return v.__floor__() if v < 0 else v.__ceil__()
+
 class Offseted(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
     def __init__(self, child: LayouterClip, offset: Offset, duration=None, has_constant_size=True):
@@ -91,10 +95,14 @@ class Offseted(SingleChildLayouterClip):
     
     @override
     def frame_function(self, t: float):
+        if (abs(self.offset.dx)>=1 or abs(self.offset.dy)>=1):
+            return LayouterClip.frame_function(self, t)
         frame = super().frame_function(t)
+        if (self.offset.dx==0 and self.offset.dy==0):
+            return frame
         offset_pixels = (
-            (self.size[0]*self.offset.dx).__floor__(),
-            (self.size[1]*self.offset.dy).__floor__()
+            rigged_round(self.size[0]*self.offset.dx),
+            rigged_round(self.size[1]*self.offset.dy)
         )
 
         frame = np.roll(frame, offset_pixels, (1,0))
@@ -126,6 +134,106 @@ class Offseted(SingleChildLayouterClip):
         return frame
 
 
+
+
+class Alignment(Enum):
+    TopLeft = 0
+    Top = 1
+    TopRight = 2
+
+    Left = 3
+    Center = 4
+    Right = 5
+
+    BottomLeft = 6
+    Bottom = 7
+    BottomRight = 8
+
+class Aligned(SingleChildLayouterClip):
+    """
+    Positions a (possibly smaller sized) child's frame according to an Alignment enum.
+    The size of the Aligned clip itself is determined by constraints imposed during layout.
+    """
+    def __init__(self, child: Optional[LayouterClip] = None, alignment: Alignment = Alignment.Center, duration=None, has_constant_size=True):
+        super().__init__(child, duration, has_constant_size)
+        self.alignment = alignment
+
+    # Note: calculate_size is inherited from SingleChildLayouterClip which, by default,
+    # sets the size equal to the child's size, or to the minimum constraints if no child.
+    # For alignment, typically the Aligned clip takes the available space (from parent constraints),
+    # but for simplicity, we keep the base behavior unless overridden here.
+    # If it *should* take the parent's size, it would be:
+    @override
+    def calculate_size(self, constraints: Constraints):
+        if self.child:
+            self.child.calculate_size(Constraints(0,0,constraints.max_width,constraints.min_height)) # Child takes constraints
+        is_finite_w = is_finite(constraints.max_width)
+        is_finite_h = is_finite(constraints.max_height)
+        self.size = ( # type: ignore
+            constraints.max_width if is_finite_w else self.child.size[0] if self.child else constraints.min_width, 
+            constraints.max_height if is_finite_h else self.child.size[1] if self.child else constraints.min_height
+        ) # Aligned takes the max available space
+        return self.size
+    # --- For this implementation, we rely on the parent or user setting the size via constraints ---
+
+    @override
+    def frame_function(self, t: float) -> np.ndarray:
+        # Get the dimensions of the Aligned clip (self) and the child clip
+        aligned_w, aligned_h = self.size
+        child_frame = self.child.get_frame(t) if self.child else super().frame_function(t)
+        child_h, child_w, child_depth = child_frame.shape
+
+        # Create a blank canvas (our frame) with the Aligned clip's size
+        # Assuming the base LayouterClip.frame_function returns a transparent image (WxHx4)
+        frame = LayouterClip.frame_function(self,t)
+
+        # Calculate the top-left (x, y) coordinates for positioning the child
+        x, y = self._get_position(aligned_w, aligned_h, child_w, child_h)
+
+        # Ensure the coordinates are non-negative integers
+        x, y = int(max(0, x)), int(max(0, y))
+
+        # Determine the slice where the child frame will be placed
+        # We need to account for the possibility of the child being larger than the parent
+        # This implementation assumes the child frame is simply clipped if it's too large.
+
+        # Slice of the background/parent frame where the child will be inserted
+        bg_slice_y_end = min(y + child_h, aligned_h)
+        bg_slice_x_end = min(x + child_w, aligned_w)
+        
+        # Slice of the child frame to use (if it's larger than the available space)
+        child_slice_h = bg_slice_y_end - y
+        child_slice_w = bg_slice_x_end - x
+        
+        # Insert the child's frame into the background/parent frame
+        frame[y:bg_slice_y_end, x:bg_slice_x_end] = child_frame[:child_slice_h, :child_slice_w]
+
+        return frame
+
+    def _get_position(self, parent_w, parent_h, child_w, child_h) -> tuple[float, float]:
+        """Calculates the top-left (x, y) coordinates for the child based on alignment."""
+        
+        # x-coordinate
+        if self.alignment in [Alignment.TopLeft, Alignment.Left, Alignment.BottomLeft]:
+            x = 0
+        elif self.alignment in [Alignment.Top, Alignment.Center, Alignment.Bottom]:
+            x = (parent_w - child_w) / 2
+        elif self.alignment in [Alignment.TopRight, Alignment.Right, Alignment.BottomRight]:
+            x = parent_w - child_w
+        else: # Default to CENTER
+            x = (parent_w - child_w) / 2
+
+        # y-coordinate
+        if self.alignment in [Alignment.TopLeft, Alignment.Top, Alignment.TopRight]:
+            y = 0
+        elif self.alignment in [Alignment.Left, Alignment.Center, Alignment.Right]:
+            y = (parent_h - child_h) / 2
+        elif self.alignment in [Alignment.BottomLeft, Alignment.Bottom, Alignment.BottomRight]:
+            y = parent_h - child_h
+        else: # Default to CENTER
+            y = (parent_h - child_h) / 2
+
+        return x, y
 
 
 

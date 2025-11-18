@@ -20,6 +20,7 @@ class Constraints:
 
 # Mostly base identifiers or smth
 class LayouterClip():
+    size: tuple[int,int]
     "Base class for everything MoviePy Layouters"
     def __init__(self, duration: Optional[float]=None, has_constant_size=True):
         self.duration = duration
@@ -34,10 +35,12 @@ class LayouterClip():
             print("[WARN] let me warn ya pls override frame_function if you directly uses LayouterClip because it returns empty image all the time")
             print("[WARN] but if you override it after init then pls ignore this")
 
-        if not ENABLE_DEBUGGING: delattr(self, "debug_size_info")
+        if not ENABLE_DEBUGGING: delattr(self, "debug_clip_info")
 
-    def debug_size_info(self, indent=0):
-        print(" "*(indent*2)+f"{type(self).__name__}: Size: {self.size}")
+    def debug_clip_info(self, indent=0):
+        print(" "*(indent*2)+f"{type(self).__name__}: {self.debug_clip_meta()}")
+    def debug_clip_meta(self):
+        return f"Size: {self.size}"
 
     @staticmethod
     def merge_constraints(one: Constraints, two: Constraints):
@@ -62,7 +65,7 @@ class LayouterClip():
 
     def frame_function(self, t: float) -> np.ndarray:
         "Returns a WxHx4 numpy array at a given t"
-        return np.zeros((*self.size, 4), dtype=np.uint8)
+        return np.zeros((self.size[1], self.size[0], 4), dtype=np.uint8)
     
     @final
     def get_frame(self, t: float):
@@ -96,9 +99,9 @@ class SingleChildLayouterClip(LayouterClip):
         if c: c.parent = self
 
     @override
-    def debug_size_info(self, indent=0):
-        super().debug_size_info(indent)
-        if self.child: self.child.debug_size_info(indent+1)
+    def debug_clip_info(self, indent=0):
+        super().debug_clip_info(indent)
+        if self.child: self.child.debug_clip_info(indent+1)
 
     @override
     def calculate_size(self, constraints: Constraints):
@@ -121,10 +124,10 @@ class MultiChildLayouterClip(LayouterClip):
             c.parent = self
 
     @override
-    def debug_size_info(self, indent=0):
-        super().debug_size_info(indent)
+    def debug_clip_info(self, indent=0):
+        super().debug_clip_info(indent)
         for child in self.children: 
-            child.debug_size_info(indent+1)
+            child.debug_clip_info(indent+1)
 
 class ProxyLayouterClip(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
@@ -133,7 +136,8 @@ class ProxyLayouterClip(SingleChildLayouterClip):
 
     @override
     def calculate_size(self, constraints: Constraints):
-        return self.child.calculate_size(constraints)
+        self.size = self.child.calculate_size(constraints)
+        return self.size
 
     @override
     def frame_function(self, t: float):

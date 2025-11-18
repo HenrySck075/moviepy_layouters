@@ -4,8 +4,10 @@ from enum import Enum
 from sys import version
 from typing import Optional, List, Protocol, Union, Tuple, assert_type, override
 import numpy as np
+from moviepy_layouters.clips.visuals import Alignment
 from moviepy_layouters.infinity import INF, Infinity, is_finite, is_inf
-from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip, ProxyLayouterClip, SingleChildLayouterClip
+from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip, ProxyLayouterClip
+
 
 class AxisAlignment(Enum):
     Start = 0,
@@ -35,34 +37,63 @@ class ListView(MultiChildLayouterClip):
         main_axis_size = 0
         cross_axis_size = 0
 
-        con = Constraints(constraints.min_width, constraints.min_height, constraints.max_width, constraints.max_height)
+        con = Constraints(0,0, constraints.max_width, constraints.max_height)
+
+        is_vertical = self.axis == Axis.Vertical
 
         # I'm well aware of the presence of getattr but we are focusing on speed here
         for c in self.children:
             if type(c) is Flex:
                 flex_children.append(c)
             else:
+                print(f"Constraints: {con}")
                 cs = c.calculate_size(con)
                 main_axis_size += cs[self.axis.value]
-                cross_axis_size = min(con.max_width if self.axis == Axis.Vertical else con.max_height, max(cross_axis_size, cs[(self.axis.value+1)%2]))
-                if self.axis == Axis.Vertical:
+                cross_axis_size = min(con.max_width if is_vertical else con.max_height, max(cross_axis_size, cs[(self.axis.value+1)%2]))
+                if is_vertical:
                     con.min_height = min(con.max_height, con.min_height+main_axis_size+self.gap) # type: ignore
                 else:
                     con.min_width = min(con.max_width, con.min_width+main_axis_size+self.gap) # type: ignore
 
         if (
             len(flex_children) != 0 and 
-            (constraints.max_height if self.axis == Axis.Vertical else constraints.max_width) is INF
+            (constraints.max_height if is_vertical else constraints.max_width) is INF
         ):
             raise ValueError("The axis of the ListView has an infinite maximum size but a Flex child was found. Please set the maximum constraints to a finite number.")
 
         if len(flex_children) == 0:
             # just take the min constraints from con its the same as the total size
             self.size = (con.min_width, con.min_height)
-            return self.size
         else:
-            self.size = (con.max_width, con.max_height)
-       
+            self.size: tuple[int, int] = (cross_axis_size, con.max_height) if is_vertical else (con.max_width, cross_axis_size) # type: ignore
+            print(f"Size: {self.size}")
+            remaining = self.size[self.axis.value] - main_axis_size
+            piece = (remaining / len(flex_children)).__floor__() # type: ignore
+            for c in flex_children:
+                s: tuple[int, int] = (self.size[0], piece) if is_vertical else (piece, self.size[1])
+                c.calculate_size(Constraints(*s, *s))
+                remaining -= piece
+                if abs(remaining) == 1: piece += remaining
+                print(f"remaining={remaining}")
+
+        return self.size
+
+    @override
+    def frame_function(self, t: float) -> np.ndarray:
+        # Obtain an empty clip
+        frame = LayouterClip.frame_function(self, 0)
+        # This assumes the sizes were correctly calculated and that they dont change their mind after calculate_size
+        # (that is theoretically fine but numpy doesnt agree so pls dont do that)
+        x, y = 0,0
+        is_vertical = self.axis == Axis.Vertical
+        for i in self.children:
+            f = i.frame_function(t)
+            w,h = i.size
+            frame[y:y+h, x:x+w] = f
+            if is_vertical: y+=h
+            else: x+=w
+        
+        return frame
               
          
 
@@ -112,11 +143,11 @@ class Grid(LayouterClip):
                     clip.parent = self
 
     @override
-    def debug_size_info(self, indent=0):
-        super().debug_size_info(indent)
+    def debug_clip_info(self, indent=0):
+        super().debug_clip_info(indent)
         for r_idx, row in enumerate(self.grid_children):
             print(" "*((indent+1)*2)+f"Row {r_idx}:")
-            for c in row: c.debug_size_info(indent+2)
+            for c in row: c.debug_clip_info(indent+2)
 
     def _validate_grid_shape(self):
         """Checks if the grid_children is rectangular."""
@@ -242,19 +273,6 @@ class Grid(LayouterClip):
 
         return frame
 
-
-class Alignment(Enum):
-    TopLeft = 0
-    Top = 1
-    TopRight = 2
-
-    Left = 3
-    Center = 4
-    Right = 5
-
-    BottomLeft = 6
-    Bottom = 7
-    BottomRight = 8
 
 class Sequential(MultiChildLayouterClip):
     """

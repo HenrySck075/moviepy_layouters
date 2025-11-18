@@ -18,5 +18,5 @@ class LayouterRenderer(VideoClip):
         self.mask.size = self.clip.size
 
 
-        if clip.debug_size_info: clip.debug_size_info()
+        if clip.debug_clip_info: clip.debug_clip_info()
         
