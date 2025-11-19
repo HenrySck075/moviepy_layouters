@@ -2,9 +2,9 @@
 from dataclasses import dataclass
 from enum import Enum
 from sys import version
-from typing import Optional, List, Protocol, Union, Tuple, assert_type, override
+from typing import Optional, List, override
 import numpy as np
-from moviepy_layouters.clips.visuals import Alignment
+from moviepy_layouters.clips.visuals import Alignment, Delayed
 from moviepy_layouters.infinity import INF, Infinity, is_finite, is_inf
 from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip, ProxyLayouterClip
 
@@ -19,13 +19,13 @@ class Axis(Enum):
     Horizontal = 0
 
 class Flex(ProxyLayouterClip):
-    def __init__(self, child: LayouterClip, flex=1, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, flex=1, duration=None):
+        super().__init__(child=child, duration=duration)
         self.flex = flex
 
 class ListView(MultiChildLayouterClip):
-    def __init__(self, children: list[LayouterClip], axis = Axis.Vertical, gap: int = 0, main_axis_alignment = AxisAlignment.Start, cross_axis_alignment = AxisAlignment.Start, duration=None, has_constant_size=True):
-        super().__init__(children, duration, has_constant_size)
+    def __init__(self, *, children: list[LayouterClip], axis = Axis.Vertical, gap: int = 0, main_axis_alignment = AxisAlignment.Start, cross_axis_alignment = AxisAlignment.Start, duration=None):
+        super().__init__(children=children, duration=duration)
         self.main_axis_alignment = main_axis_alignment
         self.cross_axis_alignment = cross_axis_alignment
         self.gap = gap
@@ -122,12 +122,12 @@ class GridSize:
 class Grid(LayouterClip):
     def __init__(
         self,
+        *,
         grid_children: List[List[LayouterClip]],
         grid_size: GridSize,
         duration: Optional[float] = None,
-        has_constant_size: bool = True
     ):
-        super().__init__(duration=duration, has_constant_size=has_constant_size)
+        super().__init__(duration=duration)
 
         self.grid_children = grid_children
         self.grid_size = grid_size
@@ -283,11 +283,11 @@ class Sequential(MultiChildLayouterClip):
     :param duration: Duration of the clips. If there's no clip at a specific time (happens if duration is longer than total duration of clips), an empty frame is returned
     """
 
-    def __init__(self, children: list[LayouterClip], alignment:Alignment, duration=None, has_constant_size=True):
+    def __init__(self, *, children: list[LayouterClip], alignment:Alignment, duration=None):
         assert(all(child.duration != None for child in children))
         if duration is None:
             duration = sum(child.duration for child in children) # type: ignore
-        super().__init__(children, duration, has_constant_size)
+        super().__init__(children=children, duration=duration)
         self.alignment = alignment
 
     @override
@@ -361,11 +361,15 @@ class Stack(MultiChildLayouterClip):
     The size of the stack is the largest size of its children.
     Each child's position is determined by the alignment property.
     """
-    def __init__(self, children: list[LayouterClip] = [], alignment: Alignment = Alignment.TopLeft, duration=None, has_constant_size=True):
-        super().__init__(children, duration, has_constant_size)
+    def __init__(self, *, children: list[LayouterClip] = [], alignment: Alignment = Alignment.TopLeft, ignores_delayed=False, ignores_completed=False, duration=None):
+        super().__init__(children=children, duration=duration)
         self.alignment = alignment
         # Stores (x, y) offset for each child after size calculation
         self._child_offsets: list[tuple[int, int]] = []
+        self.ignores_delayed = ignores_delayed
+        "Ignores [Delayed] clips in composition if it hasn't started yet. This will make rendering faster on clips heavily relying on [Delayed] with the cost of them being literally invisible."
+        self.ignores_completed = ignores_completed
+        "Ignores completed clips from composition. Again this lib is purpose-built"
 
     def calculate_size(self, constraints: Constraints):
         """
@@ -434,6 +438,8 @@ class Stack(MultiChildLayouterClip):
         
         # Draw each child frame onto the canvas
         for i, child in enumerate(self.children):
+            if self.ignores_delayed and type(child) is Delayed and (t-child.delay)<0: continue
+            if self.ignores_completed and child.duration and t-child.duration > 0: continue
             child_frame = child.get_frame(t)
             child_h, child_w, _ = child_frame.shape
             x, y = self._child_offsets[i]

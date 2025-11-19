@@ -1,15 +1,14 @@
 from typing import Optional, override
 from moviepy_layouters.clips.base import LayouterClip, SingleChildLayouterClip
-from moviepy_layouters.clips.curves import Curve, clamp
+from moviepy_layouters.curves import Curve, clamp
 
 from moviepy_layouters.clips.visuals import Offseted, Offset
 
 class AnimatedClip(SingleChildLayouterClip):
     duration: float
     "Base class for animated clips"
-    def __init__(self, duration: float, curve: Curve, has_constant_size=True):
-        "child (Optional[LayouterClip]): This parameter may be used by subclasses"
-        super().__init__(None, duration, has_constant_size)
+    def __init__(self, *, duration: float, curve: Curve):
+        super().__init__(duration=duration)
         self.curve = curve
 
     @override
@@ -24,9 +23,9 @@ class AnimatedClip(SingleChildLayouterClip):
 
 
 class AnimatedSlide(AnimatedClip):
-    def __init__(self, child: LayouterClip, start: Offset, end: Offset, duration: float, curve: Curve, has_constant_size=True):
-        super().__init__(duration, curve, has_constant_size)
-        self.slider = self.child = Offseted(child, start, duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, start: Offset, end: Offset, duration: float, curve: Curve):
+        super().__init__(duration=duration, curve=curve)
+        self.slider = self.child = Offseted(child=child, offset=start, duration=duration)
         self.startdx = start.dx
         self.startdy = start.dy
         self.enddx = end.dx

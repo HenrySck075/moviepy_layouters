@@ -1,12 +1,11 @@
 from dataclasses import dataclass
 from typing import Optional, final, override
-from moviepy import VideoClip
-from moviepy_layouters.clips.curves import clamp
+from moviepy_layouters.curves import clamp
 from moviepy_layouters.infinity import INF, Infinity
 import numpy as np
 
 
-ENABLE_DEBUGGING = True
+ENABLE_DEBUGGING = False
 
 @dataclass
 class Constraints:
@@ -23,7 +22,7 @@ class Constraints:
 class LayouterClip():
     size: tuple[int,int]
     "Base class for everything MoviePy Layouters"
-    def __init__(self, duration: Optional[float]=None, has_constant_size=True):
+    def __init__(self, *, duration: Optional[float]=None):
         self.duration = duration
         self.size_constraints: Constraints
         self.parent: Optional[LayouterClip] = None
@@ -83,8 +82,8 @@ class LayouterClip():
 
 
 class SingleChildLayouterClip(LayouterClip):
-    def __init__(self, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
-        super().__init__(duration, has_constant_size)
+    def __init__(self, *, child: Optional[LayouterClip] = None, duration=None):
+        super().__init__(duration=duration)
         self._child = None
         self.child = child
 
@@ -115,8 +114,8 @@ class SingleChildLayouterClip(LayouterClip):
         return self.child.get_frame(t) if self.child else super().frame_function(t)
 
 class MultiChildLayouterClip(LayouterClip):
-    def __init__(self, children: list[LayouterClip] = [], duration=None, has_constant_size=True):
-        super().__init__(duration, has_constant_size)
+    def __init__(self, *, children: list[LayouterClip] = [], duration=None):
+        super().__init__(duration=duration)
         self.children = children
         for c in children:
             c.parent = self
@@ -129,8 +128,8 @@ class MultiChildLayouterClip(LayouterClip):
 
 class ProxyLayouterClip(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
-    def __init__(self, child: LayouterClip, duration=None, has_constant_size=True):
-        super().__init__(child, duration or child.duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, duration=None, has_constant_size=True):
+        super().__init__(child=child, duration=duration or child.duration)
 
     @override
     def calculate_size(self, constraints: Constraints):

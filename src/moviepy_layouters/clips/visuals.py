@@ -10,8 +10,8 @@ import numpy as np
 # ==== Layouts ====
 class Box(SingleChildLayouterClip):
     "A box"
-    def __init__(self, size: Optional[tuple[int, int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, size: Optional[tuple[int, int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
+        super().__init__(child=child, duration=duration)
         self._size = size
         self._use_max_constraints = use_max
 
@@ -32,8 +32,8 @@ class Box(SingleChildLayouterClip):
 
 class ColoredBox(Box):
     "A colored box"
-    def __init__(self, color: tuple[int,int,int,int], size: Optional[tuple[int,int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
-        super().__init__(size, use_max, child, duration, has_constant_size)
+    def __init__(self, *, color: tuple[int,int,int,int], size: Optional[tuple[int,int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
+        super().__init__(size=size, use_max=use_max, child=child, duration=duration)
         self.color = color
 
     @override
@@ -43,10 +43,10 @@ class ColoredBox(Box):
 class ClippedBox(Box):
     child: LayouterClip # type: ignore
     # Override __init__ to require a child
-    def __init__(self, child: LayouterClip, size: Optional[tuple[int, int]] = None, use_max=False, duration: Optional[float] = None, has_constant_size=True):
+    def __init__(self, *, child: LayouterClip, size: Optional[tuple[int, int]] = None, use_max=False, duration: Optional[float] = None):
             
         # Temporarily call base init without child to avoid setting it before the custom setter is active
-        super().__init__(size, use_max, child, duration, has_constant_size) 
+        super().__init__(size=size, use_max=use_max, child=child, duration=duration) 
 
     @override
     def calculate_size(self, constraints: Constraints):
@@ -116,8 +116,8 @@ class EdgeInsets:
 class Padding(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
     "yuh"
-    def __init__(self, child: LayouterClip, padding: EdgeInsets, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, padding: EdgeInsets, duration=None):
+        super().__init__(child=child, duration=duration)
         self.padding = padding
 
     @override
@@ -150,8 +150,8 @@ def rigged_round(v: float):
 
 class Offseted(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
-    def __init__(self, child: LayouterClip, offset: Offset, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, offset: Offset, duration=None):
+        super().__init__(child=child, duration=duration)
         self.offset = offset
 
     @override
@@ -220,8 +220,8 @@ class Aligned(SingleChildLayouterClip):
     Positions a (possibly smaller sized) child's frame according to an Alignment enum.
     The size of the Aligned clip itself is determined by constraints imposed during layout.
     """
-    def __init__(self, child: Optional[LayouterClip] = None, alignment: Alignment = Alignment.Center, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, child: Optional[LayouterClip] = None, alignment: Alignment = Alignment.Center, duration=None):
+        super().__init__(child=child, duration=duration)
         self.alignment = alignment
 
     # Note: calculate_size is inherited from SingleChildLayouterClip which, by default,
@@ -303,8 +303,8 @@ class Aligned(SingleChildLayouterClip):
 
 
 class Delayed(ProxyLayouterClip):
-    def __init__(self, child: LayouterClip, delay: float, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+    def __init__(self, *, child: LayouterClip, delay: float, duration=None):
+        super().__init__(child=child, duration=duration)
         self.delay = delay
         if self.duration: self.duration += self.delay
 
@@ -315,8 +315,8 @@ class Delayed(ProxyLayouterClip):
 
 
 class VideoClipAdapter(LayouterClip):
-    def __init__(self, clip: VideoClip):
-        super().__init__(clip.duration, clip.has_constant_size)
+    def __init__(self, *, clip: VideoClip):
+        super().__init__(duration=clip.duration)
         self.clip = clip
         self.size = self.clip.size
 
@@ -327,10 +327,10 @@ class VideoClipAdapter(LayouterClip):
         frame = self.clip.get_frame(t)
 
         if self.clip.mask is not None:
-            mask = 255 * self.clip.mask.get_frame(t)
+            mask = 255 * self.clip.mask.get_frame(t) # type: ignore
             if mask.dtype != "uint8":
                 mask = mask.astype("uint8")
-            frame = np.dstack([frame, mask])
+            frame = np.dstack([frame, mask]) # type: ignore
         else:
-            frame = np.dstack([frame, np.full((self.size[1], self.size[0]),255)])
+            frame = np.dstack([frame, np.full((self.size[1], self.size[0]),255)]) # type: ignore
         return frame
