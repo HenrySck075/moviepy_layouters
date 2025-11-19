@@ -353,3 +353,132 @@ class Sequential(MultiChildLayouterClip):
         final_frame[dy : dy + child_H, dx : dx + child_W] = child_frame
         
         return final_frame
+
+
+class Stack(MultiChildLayouterClip):
+    """
+    A LayouterClip that stacks all its children on top of each other.
+    The size of the stack is the largest size of its children.
+    Each child's position is determined by the alignment property.
+    """
+    def __init__(self, children: list[LayouterClip] = [], alignment: Alignment = Alignment.TopLeft, duration=None, has_constant_size=True):
+        super().__init__(children, duration, has_constant_size)
+        self.alignment = alignment
+        # Stores (x, y) offset for each child after size calculation
+        self._child_offsets: list[tuple[int, int]] = []
+
+    def calculate_size(self, constraints: Constraints):
+        """
+        1. Calculate the size for all children first, using the parent's constraints.
+        2. Determine the stack's size as the max width and height of all children's calculated sizes.
+        3. Determine the (x, y) offset for each child based on the stack's final size and the alignment.
+        """
+        # 1. Calculate the size for all children
+        # We pass the parent's constraints down, as children may want to fill the available space.
+        child_sizes = []
+        child_constraints = Constraints(0,0,constraints.max_width,constraints.max_height)
+        for child in self.children:
+            child_size = child.calculate_size(child_constraints)
+            child_sizes.append(child_size)
+
+        # 2. Determine the stack's size (max width and height of all children)
+        max_w = max([w for w, h in child_sizes] + [constraints.min_width])
+        max_h = max([h for w, h in child_sizes] + [constraints.min_height])
+
+        # Clamp the calculated size within max constraints
+        self.size = ( # type: ignore # would never be inf
+            min(max_w, constraints.max_width),
+            min(max_h, constraints.max_height)
+        ) 
+        final_width, final_height = self.size
+
+        # 3. Determine the (x, y) offset for each child
+        self._child_offsets = []
+        for child_w, child_h in child_sizes:
+            x_offset, y_offset = self._get_offset(final_width, final_height, child_w, child_h)
+            self._child_offsets.append((x_offset, y_offset))
+
+        return self.size
+
+    def _get_offset(self, parent_w: int, parent_h: int, child_w: int, child_h: int) -> tuple[int, int]:
+        """Calculates the top-left (x, y) offset based on the parent/stack size and child size."""
+        # Calculate horizontal (x) position
+        if self.alignment in [Alignment.TopLeft, Alignment.Left, Alignment.BottomLeft]:
+            x = 0
+        elif self.alignment in [Alignment.Top, Alignment.Center, Alignment.Bottom]:
+            x = (parent_w - child_w) // 2
+        else: # TopRight, Right, BottomRight
+            x = parent_w - child_w
+
+        # Calculate vertical (y) position
+        if self.alignment in [Alignment.TopLeft, Alignment.Top, Alignment.TopRight]:
+            y = 0
+        elif self.alignment in [Alignment.Left, Alignment.Center, Alignment.Right]:
+            y = (parent_h - child_h) // 2
+        else: # BottomLeft, Bottom, BottomRight
+            y = parent_h - child_h
+
+        return x, y
+
+    def frame_function(self, t: float) -> np.ndarray:
+        """
+        Renders the frame by drawing each child clip onto a blank canvas
+        at its calculated offset, starting from the first child.
+        """
+        if not self.children:
+            return super().frame_function(t) # Returns an empty frame of the calculated size
+
+        width, height = self.size
+        # Create a blank, transparent canvas (WxHx4)
+        canvas = LayouterClip.frame_function(self, t) 
+        
+        # Draw each child frame onto the canvas
+        for i, child in enumerate(self.children):
+            child_frame = child.get_frame(t)
+            child_h, child_w, _ = child_frame.shape
+            x, y = self._child_offsets[i]
+
+            # Use the alpha channel to blend the child frame onto the canvas
+            # We assume a 4-channel (RGBA) format for blending.
+            
+            # Extract child's color and alpha channels
+            child_rgb = child_frame[:, :, :3]
+            child_alpha = child_frame[:, :, 3] / 255.0
+
+            # Region of the canvas to draw on (clamped to ensure it's within bounds)
+            y_start = y
+            y_end = min(y + child_h, height)
+            x_start = x
+            x_end = min(x + child_w, width)
+
+            # Corresponding region in the child frame (in case it was clipped)
+            child_y_end = y_end - y_start
+            child_x_end = x_end - x_start
+            
+            # Slice the child frame and alpha to the size of the drawing region
+            draw_rgb = child_rgb[:child_y_end, :child_x_end]
+            draw_alpha = child_alpha[:child_y_end, :child_x_end]
+            
+            # Slice the canvas region
+            canvas_region = canvas[y_start:y_end, x_start:x_end]
+
+            # Weighted average for blending: new_color = (1-alpha)*old_color + alpha*new_color
+            # Perform blending only on the area where the child frame is actually drawn
+            for c in range(3): # RGB channels
+                # Multiply alpha channel to make it (H, W, 1) for broadcasting
+                # no
+                # alpha_channel = draw_alpha[:, :, np.newaxis]
+                
+                # Blend the color (preserving the existing background if alpha < 1)
+                old_color = canvas_region[:, :, c]
+                new_color = draw_rgb[:, :, c]
+                
+                blended_color = (1.0 - draw_alpha) * old_color + draw_alpha * new_color
+                canvas_region[:, :, c] = blended_color.astype(np.uint8)
+
+            # Update the alpha channel of the canvas (max of current alpha and new alpha)
+            old_alpha = canvas_region[:, :, 3] / 255.0
+            new_canvas_alpha = old_alpha + draw_alpha * (1.0 - old_alpha)
+            canvas_region[:, :, 3] = (new_canvas_alpha * 255).astype(np.uint8)
+
+        return canvas

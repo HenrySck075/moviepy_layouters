@@ -1,6 +1,6 @@
 from typing import Optional, override
 from moviepy_layouters.clips.base import LayouterClip, SingleChildLayouterClip
-from moviepy_layouters.clips.curves import Curve
+from moviepy_layouters.clips.curves import Curve, clamp
 
 from moviepy_layouters.clips.visuals import Offseted, Offset
 
@@ -20,7 +20,7 @@ class AnimatedClip(SingleChildLayouterClip):
         return super().frame_function(t)
     @override
     def frame_function(self, t: float):
-        return self.frame_anim_function(self.curve(t/self.duration), t)
+        return self.frame_anim_function(clamp(self.curve(t/self.duration),0,1), t)
 
 
 class AnimatedSlide(AnimatedClip):

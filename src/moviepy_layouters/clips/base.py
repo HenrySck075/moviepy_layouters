@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, final, override
 from moviepy import VideoClip
+from moviepy_layouters.clips.curves import clamp
 from moviepy_layouters.infinity import INF, Infinity
 import numpy as np
 
@@ -77,10 +78,7 @@ class LayouterClip():
         if self.memoized_t == t and self.memoized_frame is not None:
             return self.memoized_frame
         self.memoized_t = t
-        if (t < 0 or (self.duration and self.duration < t)):
-            # Returns empty image if out of bounds
-            return LayouterClip.frame_function(self, 0)
-        self.memoized_frame = self.frame_function(t)
+        self.memoized_frame = self.frame_function(clamp(t, 0, self.duration or float("inf")))
         return self.memoized_frame
 
 
@@ -132,7 +130,7 @@ class MultiChildLayouterClip(LayouterClip):
 class ProxyLayouterClip(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
     def __init__(self, child: LayouterClip, duration=None, has_constant_size=True):
-        super().__init__(child, duration, has_constant_size)
+        super().__init__(child, duration or child.duration, has_constant_size)
 
     @override
     def calculate_size(self, constraints: Constraints):

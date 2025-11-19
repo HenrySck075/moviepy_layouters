@@ -3,16 +3,17 @@ from enum import Enum
 from typing import Optional, override
 
 from moviepy.video.VideoClip import VideoClip
-from moviepy_layouters.clips.base import Constraints, LayouterClip, SingleChildLayouterClip
+from moviepy_layouters.clips.base import Constraints, LayouterClip, ProxyLayouterClip, SingleChildLayouterClip
 from moviepy_layouters.infinity import INF, is_finite
 import numpy as np
 
 # ==== Layouts ====
 class Box(SingleChildLayouterClip):
     "A box"
-    def __init__(self, size: Optional[tuple[int, int]] = None, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
+    def __init__(self, size: Optional[tuple[int, int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
         super().__init__(child, duration, has_constant_size)
         self._size = size
+        self._use_max_constraints = use_max
 
     @override
     def calculate_size(self, constraints: Constraints):
@@ -20,20 +21,85 @@ class Box(SingleChildLayouterClip):
             constraints = self.merge_constraints(
                 constraints, Constraints(*self._size, *self._size)
             )
-            self.size = (constraints.min_width, constraints.min_height)
+            if self.child: self.child.calculate_size(constraints)
+            self.size = (
+                constraints.max_width if self._use_max_constraints and is_finite(constraints.max_width) else constraints.min_width, 
+                constraints.max_height if self._use_max_constraints and is_finit(constraints.max_height) else constraints.min_height # type: ignore
+            ) #type: ignore
             return self.size
         else:
             return super().calculate_size(constraints)
 
 class ColoredBox(Box):
     "A colored box"
-    def __init__(self, color: tuple[int,int,int,int], size: Optional[tuple[int,int]] = None, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
-        super().__init__(size, child, duration, has_constant_size)
+    def __init__(self, color: tuple[int,int,int,int], size: Optional[tuple[int,int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None, has_constant_size=True):
+        super().__init__(size, use_max, child, duration, has_constant_size)
         self.color = color
 
     @override
     def frame_function(self, t: float):
         return np.full((self.size[1],self.size[0],4), self.color) 
+
+class ClippedBox(Box):
+    child: LayouterClip # type: ignore
+    # Override __init__ to require a child
+    def __init__(self, child: LayouterClip, size: Optional[tuple[int, int]] = None, use_max=False, duration: Optional[float] = None, has_constant_size=True):
+            
+        # Temporarily call base init without child to avoid setting it before the custom setter is active
+        super().__init__(size, use_max, child, duration, has_constant_size) 
+
+    @override
+    def calculate_size(self, constraints: Constraints):
+        """
+        The ClippedBox size is set by the input constraints.
+        The child is calculated with maximum possible constraints (INF) to determine its desired size.
+        """
+        # 1. ClippedBox size is determined by the constraints passed to it.
+        # Following LayouterClip.calculate_size default, we use min constraints as size 
+        # (This is typical if the clip wants to fit inside the parent's area)
+        self.size = (constraints.min_width, constraints.min_height)
+        
+        # 2. Pass max constraints to the child so it can decide its 'natural' size.
+        # Assuming Constraints has INF defined for max_width/height
+        max_constraints = Constraints()
+        
+        # The child's calculated size will be stored in self.child.size
+        # The return value is the ClippedBox's size
+        self.child.calculate_size(max_constraints) 
+        return self.size
+
+    @override
+    def frame_function(self, t: float) -> np.ndarray:
+        """
+        Gets the child's frame and clips it to the ClippedBox's size (self.size).
+        Position is always top-left.
+        """
+        # Get the child's frame, which could be larger than self.size
+        child_frame: np.ndarray = self.child.get_frame(t)
+        
+        # The size of the ClippedBox
+        clip_width, clip_height = self.size
+        
+        # Clip the child frame: [height_slice, width_slice, color_channel_slice]
+        # Since position is always top-left, the slice starts at 0 for both height and width.
+        # The resulting frame will have the dimensions (clip_height, clip_width, 4)
+        
+        clipped_frame = child_frame[:clip_height, :clip_width, :]
+        
+        # Check if the clipped_frame is smaller than the required clip_size (due to child being smaller)
+        # If the child frame is smaller, it needs to be padded with transparent pixels (zeros).
+        if clipped_frame.shape[0] < clip_height or clipped_frame.shape[1] < clip_width:
+            
+            # Create a blank transparent image of the correct final size
+            final_frame = np.zeros((clip_height, clip_width, 4), dtype=np.uint8)
+            
+            # Place the clipped frame (which might be smaller) into the top-left of the final frame
+            h, w, _ = clipped_frame.shape
+            final_frame[:h, :w, :] = clipped_frame
+            return final_frame
+            
+        return clipped_frame
+
 
 
 @dataclass
@@ -236,14 +302,25 @@ class Aligned(SingleChildLayouterClip):
         return x, y
 
 
+class Delayed(ProxyLayouterClip):
+    def __init__(self, child: LayouterClip, delay: float, duration=None, has_constant_size=True):
+        super().__init__(child, duration, has_constant_size)
+        self.delay = delay
+        if self.duration: self.duration += self.delay
+
+    def frame_function(self, t: float):
+        t -= self.delay
+        if t < 0: t = 0
+        return super().frame_function(t)
+
 
 class VideoClipAdapter(LayouterClip):
     def __init__(self, clip: VideoClip):
         super().__init__(clip.duration, clip.has_constant_size)
         self.clip = clip
+        self.size = self.clip.size
 
     def calculate_size(self, _): # type: ignore
-        self.size = self.clip.size
         return self.size
 
     def frame_function(self, t: float) -> np.ndarray:

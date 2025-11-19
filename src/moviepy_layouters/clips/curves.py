@@ -14,8 +14,7 @@ def clamp[T: SupportsAllComparisons](v: T, begin: T, end: T):
 
 class Curve():
     def __call__(self, t: float) -> float:
-        assert(0<=t and t<=1)
-        return self.transform(t)
+        return self.transform(clamp(t,0,1))
     def transform(self, t:float) -> float:
         raise NotImplementedError
 
