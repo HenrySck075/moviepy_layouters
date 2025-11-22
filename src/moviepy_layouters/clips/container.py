@@ -7,6 +7,7 @@ import numpy as np
 from moviepy_layouters.clips.visuals import Alignment, Delayed
 from moviepy_layouters.infinity import INF, Infinity, is_finite, is_inf
 from moviepy_layouters.clips.base import LayouterClip, Constraints, MultiChildLayouterClip, ProxyLayouterClip
+from moviepy_layouters.utils import paste_image_array
 
 
 class AxisAlignment(Enum):
@@ -34,8 +35,8 @@ class ListView(MultiChildLayouterClip):
     @override
     def calculate_size(self, constraints):
         flex_children: list[Flex] = []
-        main_axis_size = 0
-        cross_axis_size = 0
+        main_axis_size: int = 0
+        cross_axis_size: int = 0
 
         con = Constraints(0,0, constraints.max_width, constraints.max_height)
 
@@ -49,7 +50,7 @@ class ListView(MultiChildLayouterClip):
                 print(f"Constraints: {con}")
                 cs = c.calculate_size(con)
                 main_axis_size += cs[self.axis.value]
-                cross_axis_size = min(con.max_width if is_vertical else con.max_height, max(cross_axis_size, cs[(self.axis.value+1)%2]))
+                cross_axis_size = min(con.max_width if is_vertical else con.max_height, max(cross_axis_size, cs[(self.axis.value+1)%2])) # type: ignore
                 if is_vertical:
                     con.min_height = min(con.max_height, con.min_height+main_axis_size+self.gap) # type: ignore
                 else:
@@ -63,7 +64,8 @@ class ListView(MultiChildLayouterClip):
 
         if len(flex_children) == 0:
             # just take the min constraints from con its the same as the total size
-            self.size = (con.min_width, con.min_height)
+            self.size = (main_axis_size, cross_axis_size)
+            if is_vertical: self.size = (self.size[1], self.size[0])
         else:
             self.size: tuple[int, int] = (cross_axis_size, con.max_height) if is_vertical else (con.max_width, cross_axis_size) # type: ignore
             print(f"Size: {self.size}")
@@ -432,7 +434,6 @@ class Stack(MultiChildLayouterClip):
         if not self.children:
             return super().frame_function(t) # Returns an empty frame of the calculated size
 
-        width, height = self.size
         # Create a blank, transparent canvas (WxHx4)
         canvas = LayouterClip.frame_function(self, t) 
         
@@ -440,51 +441,6 @@ class Stack(MultiChildLayouterClip):
         for i, child in enumerate(self.children):
             if self.ignores_delayed and type(child) is Delayed and (t-child.delay)<0: continue
             if self.ignores_completed and child.duration and t-child.duration > 0: continue
-            child_frame = child.get_frame(t)
-            child_h, child_w, _ = child_frame.shape
-            x, y = self._child_offsets[i]
-
-            # Use the alpha channel to blend the child frame onto the canvas
-            # We assume a 4-channel (RGBA) format for blending.
-            
-            # Extract child's color and alpha channels
-            child_rgb = child_frame[:, :, :3]
-            child_alpha = child_frame[:, :, 3] / 255.0
-
-            # Region of the canvas to draw on (clamped to ensure it's within bounds)
-            y_start = y
-            y_end = min(y + child_h, height)
-            x_start = x
-            x_end = min(x + child_w, width)
-
-            # Corresponding region in the child frame (in case it was clipped)
-            child_y_end = y_end - y_start
-            child_x_end = x_end - x_start
-            
-            # Slice the child frame and alpha to the size of the drawing region
-            draw_rgb = child_rgb[:child_y_end, :child_x_end]
-            draw_alpha = child_alpha[:child_y_end, :child_x_end]
-            
-            # Slice the canvas region
-            canvas_region = canvas[y_start:y_end, x_start:x_end]
-
-            # Weighted average for blending: new_color = (1-alpha)*old_color + alpha*new_color
-            # Perform blending only on the area where the child frame is actually drawn
-            for c in range(3): # RGB channels
-                # Multiply alpha channel to make it (H, W, 1) for broadcasting
-                # no
-                # alpha_channel = draw_alpha[:, :, np.newaxis]
-                
-                # Blend the color (preserving the existing background if alpha < 1)
-                old_color = canvas_region[:, :, c]
-                new_color = draw_rgb[:, :, c]
-                
-                blended_color = (1.0 - draw_alpha) * old_color + draw_alpha * new_color
-                canvas_region[:, :, c] = blended_color.astype(np.uint8)
-
-            # Update the alpha channel of the canvas (max of current alpha and new alpha)
-            old_alpha = canvas_region[:, :, 3] / 255.0
-            new_canvas_alpha = old_alpha + draw_alpha * (1.0 - old_alpha)
-            canvas_region[:, :, 3] = (new_canvas_alpha * 255).astype(np.uint8)
-
+            paste_image_array(canvas, child.get_frame(t),self._child_offsets[i])
         return canvas
+

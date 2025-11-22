@@ -5,7 +5,7 @@ from moviepy_layouters.infinity import INF, Infinity
 import numpy as np
 
 
-ENABLE_DEBUGGING = False
+ENABLE_DEBUGGING = True
 
 @dataclass
 class Constraints:
@@ -35,7 +35,7 @@ class LayouterClip():
             print("[WARN] let me warn ya pls override frame_function if you directly uses LayouterClip because it returns empty image all the time")
             print("[WARN] but if you override it after init then pls ignore this")
 
-        if not ENABLE_DEBUGGING: delattr(self, "debug_clip_info")
+        if not ENABLE_DEBUGGING: self.debug_clip_info = None # type: ignore
 
     def debug_clip_info(self, indent=0):
         print(" "*(indent*2)+f"{type(self).__name__}: {self.debug_clip_meta()}")

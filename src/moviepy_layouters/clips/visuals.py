@@ -5,12 +5,14 @@ from typing import Optional, override
 from moviepy.video.VideoClip import VideoClip
 from moviepy_layouters.clips.base import Constraints, LayouterClip, ProxyLayouterClip, SingleChildLayouterClip
 from moviepy_layouters.infinity import INF, is_finite
+from moviepy_layouters.utils import paste_image_array
 import numpy as np
 
+type BoxSize = Optional[tuple[int|None, int|None]]
 # ==== Layouts ====
 class Box(SingleChildLayouterClip):
     "A box"
-    def __init__(self, *, size: Optional[tuple[int, int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
+    def __init__(self, *, size: BoxSize = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
         super().__init__(child=child, duration=duration)
         self._size = size
         self._use_max_constraints = use_max
@@ -18,13 +20,21 @@ class Box(SingleChildLayouterClip):
     @override
     def calculate_size(self, constraints: Constraints):
         if self._size:
-            constraints = self.merge_constraints(
-                constraints, Constraints(*self._size, *self._size)
+            c = Constraints(
+                self._size[0] if self._size[0] else constraints.min_width,
+                self._size[1] if self._size[1] else constraints.min_height,
+                self._size[0] if self._size[0] else constraints.max_width,
+                self._size[1] if self._size[1] else constraints.max_height,
             )
-            if self.child: self.child.calculate_size(constraints)
+            constraints = self.merge_constraints(
+                constraints, c 
+            )
+            if self.child: 
+                self.size = self.child.calculate_size(constraints)
+                return self.size
             self.size = (
                 constraints.max_width if self._use_max_constraints and is_finite(constraints.max_width) else constraints.min_width, 
-                constraints.max_height if self._use_max_constraints and is_finit(constraints.max_height) else constraints.min_height # type: ignore
+                constraints.max_height if self._use_max_constraints and is_finite(constraints.max_height) else constraints.min_height # type: ignore
             ) #type: ignore
             return self.size
         else:
@@ -32,18 +42,30 @@ class Box(SingleChildLayouterClip):
 
 class ColoredBox(Box):
     "A colored box"
-    def __init__(self, *, color: tuple[int,int,int,int], size: Optional[tuple[int,int]] = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
+    def __init__(self, *, color: tuple[int,int,int,int], size: BoxSize = None, use_max=False, child: Optional[LayouterClip] = None, duration=None):
         super().__init__(size=size, use_max=use_max, child=child, duration=duration)
         self.color = color
 
     @override
     def frame_function(self, t: float):
-        return np.full((self.size[1],self.size[0],4), self.color) 
+        f = np.full((self.size[1],self.size[0],4), self.color) 
+        if self.child:
+            paste_image_array(f, self.child.get_frame(t), (0,0))
+        return f
+
+class ConstrainedBox(Box):
+    "Impose additional constraints to the clips"
+    def __init__(self, *, constraints: Constraints, use_max=False, child: Optional[LayouterClip] = None, duration=None):
+        super().__init__(size=None, use_max=use_max, child=child, duration=duration)
+        self.constraints = constraints
+
+    def calculate_size(self, constraints: Constraints):
+        return super().calculate_size(self.merge_constraints(constraints, self.constraints))
 
 class ClippedBox(Box):
     child: LayouterClip # type: ignore
     # Override __init__ to require a child
-    def __init__(self, *, child: LayouterClip, size: Optional[tuple[int, int]] = None, use_max=False, duration: Optional[float] = None):
+    def __init__(self, *, child: LayouterClip, size: BoxSize = None, use_max=False, duration: Optional[float] = None):
             
         # Temporarily call base init without child to avoid setting it before the custom setter is active
         super().__init__(size=size, use_max=use_max, child=child, duration=duration) 
@@ -113,6 +135,10 @@ class EdgeInsets:
     def all(inset: int):
         return EdgeInsets(inset,inset,inset,inset)
 
+    @staticmethod
+    def symmetric(vertical: int = 0, horizontal: int = 0):
+        return EdgeInsets(vertical, horizontal, vertical, horizontal)
+
 class Padding(SingleChildLayouterClip):
     child: LayouterClip # type: ignore
     "yuh"
@@ -130,7 +156,11 @@ class Padding(SingleChildLayouterClip):
         )
 
         self.child.calculate_size(child_constraints)
-        return LayouterClip.calculate_size(self,constraints)
+        self.size = (
+            self.child.size[0]+self.padding.left+self.padding.right,
+            self.child.size[1]+self.padding.top+self.padding.bottom
+        )
+        return self.size 
 
     @override
     def frame_function(self, t: float):
@@ -232,7 +262,7 @@ class Aligned(SingleChildLayouterClip):
     @override
     def calculate_size(self, constraints: Constraints):
         if self.child:
-            self.child.calculate_size(Constraints(0,0,constraints.max_width,constraints.min_height)) # Child takes constraints
+            self.child.calculate_size(Constraints(0,0,constraints.max_width,constraints.max_height)) # Child takes constraints
         is_finite_w = is_finite(constraints.max_width)
         is_finite_h = is_finite(constraints.max_height)
         self.size = ( # type: ignore
@@ -279,25 +309,27 @@ class Aligned(SingleChildLayouterClip):
     def _get_position(self, parent_w, parent_h, child_w, child_h) -> tuple[float, float]:
         """Calculates the top-left (x, y) coordinates for the child based on alignment."""
         
+        xidx = self.alignment.value % 3
         # x-coordinate
-        if self.alignment in [Alignment.TopLeft, Alignment.Left, Alignment.BottomLeft]:
-            x = 0
-        elif self.alignment in [Alignment.Top, Alignment.Center, Alignment.Bottom]:
-            x = (parent_w - child_w) / 2
-        elif self.alignment in [Alignment.TopRight, Alignment.Right, Alignment.BottomRight]:
-            x = parent_w - child_w
-        else: # Default to CENTER
-            x = (parent_w - child_w) / 2
+        match xidx:
+        #if self.alignment in [Alignment.TopLeft, Alignment.Left, Alignment.BottomLeft]:
+            case 0: x = 0
+        #elif self.alignment in [Alignment.Top, Alignment.Center, Alignment.Bottom]:
+            case 1: x = (parent_w - child_w) / 2
+        #elif self.alignment in [Alignment.TopRight, Alignment.Right, Alignment.BottomRight]:
+            case 2: x = parent_w - child_w
 
         # y-coordinate
-        if self.alignment in [Alignment.TopLeft, Alignment.Top, Alignment.TopRight]:
-            y = 0
-        elif self.alignment in [Alignment.Left, Alignment.Center, Alignment.Right]:
-            y = (parent_h - child_h) / 2
-        elif self.alignment in [Alignment.BottomLeft, Alignment.Bottom, Alignment.BottomRight]:
-            y = parent_h - child_h
-        else: # Default to CENTER
-            y = (parent_h - child_h) / 2
+        yidx = self.alignment.value // 3
+        match yidx:
+        #if self.alignment in [Alignment.TopLeft, Alignment.Top, Alignment.TopRight]:
+            case 0: y = 0
+        #elif self.alignment in [Alignment.Left, Alignment.Center, Alignment.Right]:
+            case 1: y = (parent_h - child_h) / 2
+        #elif self.alignment in [Alignment.BottomLeft, Alignment.Bottom, Alignment.BottomRight]:
+            case 2: y = parent_h - child_h
+        #else: # Default to CENTER
+            case _: y = (parent_h - child_h) / 2
 
         return x, y
 
